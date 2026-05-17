@@ -1,6 +1,6 @@
 """Unit tests for metadata_service — MongoDB and fetcher are mocked."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -25,7 +25,8 @@ async def test_store_metadata_success():
          patch("app.services.metadata_service.get_collection", return_value=mock_collection):
         result = await store_metadata("https://example.com")
 
-    assert result.url == "https://example.com"
+    # Pydantic v2 normalizes URLs — trailing slash is expected
+    assert result.url == "https://example.com/"
     assert result.headers == {"content-type": "text/html"}
     assert result.page_source == "<html>test</html>"
 
@@ -50,7 +51,7 @@ async def test_get_metadata_returns_record_when_found():
         "headers": {},
         "cookies": {},
         "page_source": "<html/>",
-        "collected_at": datetime.utcnow(),
+        "collected_at": datetime.now(timezone.utc),
     }
     mock_collection = AsyncMock()
     mock_collection.find_one = AsyncMock(return_value=doc)
