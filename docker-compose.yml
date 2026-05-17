@@ -1,0 +1,43 @@
+version: "3.9"
+
+services:
+  mongo:
+    image: mongo:7.0
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_DATABASE: ${DB_NAME:-metadata_db}
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  api:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    depends_on:
+      mongo:
+        # Wait for the healthcheck to pass before starting the API.
+        # Without this, the app can start before Mongo accepts connections.
+        condition: service_healthy
+    environment:
+      # Override MONGO_URI so the API container reaches the `mongo` service by
+      # its compose service name, not localhost.
+      - MONGO_URI=mongodb://mongo:27017
+    command: >
+      uvicorn app.main:app
+      --host 0.0.0.0
+      --port 8000
+      --log-level ${LOG_LEVEL:-info}
+
+volumes:
+  mongo_data:
