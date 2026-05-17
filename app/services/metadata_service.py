@@ -6,12 +6,12 @@ HTTP layer and MongoDB. Routes and workers call these functions; they do not
 touch Motor directly.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from pymongo.errors import DuplicateKeyError
 
 from app.db.mongo import get_collection
-from app.models.metadata import MetadataDocument, MetadataResponse
+from app.models.metadata import MetadataDocument, MetadataResponse, normalize_url
 from app.services.fetcher import FetchError, fetch_url_metadata
 
 
@@ -27,13 +27,15 @@ async def store_metadata(url: str) -> MetadataResponse:
         FetchError: if the remote URL cannot be retrieved.
         DuplicateURLError: if the URL already exists in the database.
     """
-    raw = await fetch_url_metadata(url)
+    # Normalize before fetching so the stored key matches any future lookup.
+    canonical_url = normalize_url(url)
+    raw = await fetch_url_metadata(canonical_url)
     doc = MetadataDocument(
-        url=url,
+        url=canonical_url,
         headers=raw["headers"],
         cookies=raw["cookies"],
         page_source=raw["page_source"],
-        collected_at=datetime.utcnow(),
+        collected_at=datetime.now(timezone.utc),
     )
 
     collection = get_collection()
@@ -42,7 +44,7 @@ async def store_metadata(url: str) -> MetadataResponse:
     except DuplicateKeyError:
         # The unique index on `url` prevents double storage. Surface this so the
         # route layer can return a meaningful 409 instead of a 500.
-        raise DuplicateURLError(f"Metadata for '{url}' already exists.")
+        raise DuplicateURLError(f"Metadata for '{canonical_url}' already exists.")
 
     return MetadataResponse(**doc.model_dump())
 
@@ -55,7 +57,7 @@ async def get_metadata(url: str) -> MetadataResponse | None:
     to return 404 or 202 depending on context.
     """
     collection = get_collection()
-    doc = await collection.find_one({"url": url}, {"_id": 0})
+    doc = await collection.find_one({"url": normalize_url(url)}, {"_id": 0})
     if doc is None:
         return None
     return MetadataResponse(**doc)
@@ -68,8 +70,9 @@ async def upsert_metadata_background(url: str) -> None:
     Used by the background worker: if two rapid GETs race, only one insertion
     wins; the other is a no-op rather than an error.
     """
+    canonical_url = normalize_url(url)
     try:
-        raw = await fetch_url_metadata(url)
+        raw = await fetch_url_metadata(canonical_url)
     except FetchError:
         # Background failures are silent — we can't surface them to the caller
         # because the 202 has already been sent. A real system would push this
@@ -77,11 +80,11 @@ async def upsert_metadata_background(url: str) -> None:
         return
 
     doc = MetadataDocument(
-        url=url,
+        url=canonical_url,
         headers=raw["headers"],
         cookies=raw["cookies"],
         page_source=raw["page_source"],
-        collected_at=datetime.utcnow(),
+        collected_at=datetime.now(timezone.utc),
     )
 
     collection = get_collection()

@@ -6,10 +6,21 @@ Separating the DB document model (MetadataDocument) from the API response model
 the public contract.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from pydantic import AnyHttpUrl, BaseModel, Field
+
+
+def normalize_url(url: str | AnyHttpUrl) -> str:
+    """
+    Canonicalize a URL string the same way Pydantic v2 does for AnyHttpUrl fields.
+
+    Pydantic v2 normalizes 'https://example.com' → 'https://example.com/' (trailing slash).
+    Any code path that stores or queries a URL must pass through this function so the
+    key is always in the same form, preventing POST/GET lookup mismatches.
+    """
+    return str(AnyHttpUrl(str(url)))
 
 
 class MetadataRequest(BaseModel):
@@ -53,4 +64,4 @@ class MetadataDocument(BaseModel):
     headers: dict[str, Any]
     cookies: dict[str, Any]
     page_source: str
-    collected_at: datetime = Field(default_factory=datetime.utcnow)
+    collected_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
